@@ -8,7 +8,7 @@ const app = document.querySelector('#app');
 // =========================================================
 // SUPABASE CONFIGURATION
 // =========================================================
-const SUPABASE_URL = 'https://qwbkguzdxqeqzeshinjm.supabase.co';
+const SUPABASE_URL = 'https://ujuqofatjgigowvdqsuo.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqdXFvZmF0amdpZ293dmRxc3VvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNzQyNTQsImV4cCI6MjEwNjg1MDI1NH0.dRvZWF7tq7TaW1d2Uz067Jnp5Q-lPoe1QENqoGUuIF8';
 
