@@ -8,9 +8,9 @@ const app = document.querySelector('#app');
 // =========================================================
 // SUPABASE CONFIGURATION
 // =========================================================
-const SUPABASE_URL = 'https://ujuqofatjgigowvdqsuo.supabase.co';
+const SUPABASE_URL = 'https://lwqpncnhdischqhitrga.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqdXFvZmF0amdpZ293dmRxc3VvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNzQyNTQsImV4cCI6MjEwNjg1MDI1NH0.dRvZWF7tq7TaW1d2Uz067Jnp5Q-lPoe1QENqoGUuIF8';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx3cXBuY25oZGlzY2hxaGl0cmdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzNDM5MTIsImV4cCI6MjEwNjkxOTkxMn0.iGj6_MYKyRV64YcLvE9c8DG5E-OmfMULRoKzI2scS_A';
 
 const supabaseClient = window.supabase
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
