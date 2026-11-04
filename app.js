@@ -280,7 +280,6 @@ function esc(value = '') {
   );
 }
 
-// ฟังก์ชันหาหน่วยงานของรถจากตาราง vehicles (ถ้าไม่มีค่อยดูจาก usages)
 function getVehicleDepartment(plate) {
   if (!plate) return '';
   const cleanP = String(plate).trim().replace(/\s+/g, '');
@@ -305,7 +304,6 @@ function getVehicleDepartment(plate) {
   return '';
 }
 
-// ดึงรายชื่อศูนย์/สังกัดรถจากตาราง vehicles คอลัมน์ department โดยตรง
 function getDepartmentsFromVehicles() {
   const deptSet = new Set();
   (db.vehicles || []).forEach((v) => {
@@ -1851,7 +1849,6 @@ function monthData(month = bangkokMonthKey(), department = 'ทั้งหม�
   if (department && department !== 'ทั้งหมด') {
     const cleanDept = department.trim().toLowerCase();
 
-    // รวบรวมทะเบียนรถทั้งหมดที่เป็นของศูนย์นี้จากตาราง vehicles
     const targetPlates = new Set();
     (db.vehicles || []).forEach((v) => {
       if ((v.department || '').trim().toLowerCase() === cleanDept && v.plate) {
@@ -1859,14 +1856,12 @@ function monthData(month = bangkokMonthKey(), department = 'ทั้งหม�
       }
     });
 
-    // กรอง usages: ทริปที่ระบุศูนย์นี้ หรือ ใช้รถที่สังกัดศูนย์นี้
     usages = usages.filter((item) => {
       const uDept = (item.department || '').trim().toLowerCase();
       const uPlate = String(item.plate || '').trim().replace(/\s+/g, '');
       return targetPlates.has(uPlate) || uDept === cleanDept;
     });
 
-    // กรอง fuels: ค่าน้ำมันของรถที่สังกัดศูนย์นี้ตามตาราง vehicles
     fuels = fuels.filter((item) => {
       const fPlate = String(item.plate || '').trim().replace(/\s+/g, '');
       const vehicleDept = getVehicleDepartment(item.plate).toLowerCase();
@@ -2065,16 +2060,15 @@ async function refreshDashboardNow(admin) {
 
 /* =========================================================
    ADMIN TABLES (DIRECT DELETE & APPROVE TO SUPABASE)
+   * แก้ไขแล้ว: ค้นหาโดยไม่อัปเดตทั้งหน้า ป้องกัน Focus เด้งหลุด *
    ========================================================= */
-function adminTable(type) {
+function renderAdminTableRows(type, records) {
   const isUsage = type === 'usage';
-  const records = isUsage ? db.usages : db.fuels;
-  const title = isUsage ? 'จัดการข้อมูลการใช้งานรถ' : 'จัดการข้อมูลการเติมน้ำมัน';
-  const description = isUsage
-    ? 'ค้นหาตามชื่อผู้ขับขี่ ทะเบียนรถ หรือวัตถุประสงค์'
-    : 'ตรวจสอบรายการเติมน้ำมัน สลิป และการอนุมัติรายการ';
+  if (!records.length) {
+    return `<tr><td colspan="${isUsage ? 6 : 8}" class="empty">ไม่พบข้อมูล</td></tr>`;
+  }
 
-  const rows = records
+  return records
     .map((item) =>
       isUsage
         ? `
@@ -2112,9 +2106,18 @@ function adminTable(type) {
               <button class="danger-button" data-delete="fuel:${item.id}" type="button">ลบ</button>
             </td>
           </tr>
-        `,
+        `
     )
     .join('');
+}
+
+function adminTable(type) {
+  const isUsage = type === 'usage';
+  const records = isUsage ? db.usages : db.fuels;
+  const title = isUsage ? 'จัดการข้อมูลการใช้งานรถ' : 'จัดการข้อมูลการเติมน้ำมัน';
+  const description = isUsage
+    ? 'ค้นหาตามชื่อผู้ขับขี่ ทะเบียนรถ หรือวัตถุประสงค์'
+    : 'ตรวจสอบรายการเติมน้ำมัน สลิป และการอนุมัติรายการ';
 
   const headers = isUsage
     ? `<th>วันที่</th><th>ผู้ขับขี่</th><th>ทะเบียน</th><th>ระยะทาง</th><th>วัตถุประสงค์</th><th>จัดการ</th>`
@@ -2124,7 +2127,7 @@ function adminTable(type) {
     ${pageHead(title, description)}
     <section class="card">
       <div class="filter-bar">
-        <input id="table-search" placeholder="ค้นหาข้อมูล" />
+        <input id="table-search" placeholder="ค้นหาข้อมูล..." />
         <input id="date-filter" type="date" />
         <select id="plate-filter">
           <option value="">ทุกรถ</option>
@@ -2136,7 +2139,9 @@ function adminTable(type) {
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
-          <tbody id="table-body">${rows || `<tr><td colspan="8" class="empty">ไม่พบข้อมูล</td></tr>`}</tbody>
+          <tbody id="table-body">
+            ${renderAdminTableRows(type, records)}
+          </tbody>
         </table>
       </div>
     </section>
@@ -2146,90 +2151,98 @@ function adminTable(type) {
 }
 
 function bindTable(type) {
-  const refresh = () => {
-    const search = document.querySelector('#table-search').value.toLowerCase();
-    const date = document.querySelector('#date-filter').value;
-    const plate = document.querySelector('#plate-filter').value;
+  const isUsage = type === 'usage';
+  const tbody = document.querySelector('#table-body');
+  const searchInput = document.querySelector('#table-search');
+  const dateInput = document.querySelector('#date-filter');
+  const plateSelect = document.querySelector('#plate-filter');
 
-    const all = type === 'usage' ? db.usages : db.fuels;
+  const bindRowEvents = () => {
+    document.querySelectorAll('[data-edit]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const [kind, id] = button.dataset.edit.split(':');
+        state.userTab = kind;
+        state.edit = (kind === 'usage' ? db.usages : db.fuels).find((item) => item.id === id);
+        state.view = 'admin-entry';
+        renderApp();
+      });
+    });
+
+    document.querySelectorAll('[data-delete]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const [kind, id] = button.dataset.delete.split(':');
+        if (!confirm('ยืนยันการลบรายการนี้จากฐานข้อมูลคลาวด์หรือไม่?')) return;
+
+        try {
+          if (supabaseClient) {
+            const table = kind === 'usage' ? 'usages' : 'fuels';
+            const { error } = await supabaseClient.from(table).delete().eq('id', id);
+            if (error) throw error;
+          }
+
+          await addAudit('ลบข้อมูล', `${kind}: ID ${id}`);
+          await syncRemoteData();
+          toast('ลบรายการเรียบร้อย (ระบบคืนยอดเงินเข้าบัตรให้อัตโนมัติ)');
+          adminTable(type);
+        } catch (err) {
+          toast('ลบไม่สำเร็จ: ' + err.message, 'error');
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-approve]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const fuelId = button.dataset.approve;
+        try {
+          if (supabaseClient) {
+            const { error } = await supabaseClient.from('fuels').update({ approved: true }).eq('id', fuelId);
+            if (error) throw error;
+          }
+
+          await addAudit('อนุมัติรายการเติมน้ำมัน', `ID: ${fuelId}`);
+          await syncRemoteData();
+          toast('อนุมัติรายการเรียบร้อย');
+          adminTable('fuel');
+        } catch (err) {
+          toast('อนุมัติไม่สำเร็จ: ' + err.message, 'error');
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-receipt]').forEach((button) => {
+      button.addEventListener('click', () => showReceipt(button.dataset.receipt));
+    });
+  };
+
+  const refresh = () => {
+    const search = (searchInput?.value || '').toLowerCase().trim();
+    const date = dateInput?.value || '';
+    const plate = plateSelect?.value || '';
+
+    const all = isUsage ? db.usages : db.fuels;
     const filtered = all
       .filter((item) => !search || Object.values(item).join(' ').toLowerCase().includes(search))
       .filter((item) => !date || item.date === date)
       .filter((item) => !plate || item.plate === plate);
 
-    const original = type === 'usage' ? db.usages : db.fuels;
-    if (type === 'usage') db.usages = filtered;
-    else db.fuels = filtered;
-
-    adminTable(type);
-
-    if (type === 'usage') db.usages = original;
-    else db.fuels = original;
-
-    document.querySelector('#table-search').value = search;
-    document.querySelector('#date-filter').value = date;
-    document.querySelector('#plate-filter').value = plate;
+    if (tbody) {
+      tbody.innerHTML = renderAdminTableRows(type, filtered);
+      bindRowEvents();
+    }
   };
 
-  document.querySelector('#table-search')?.addEventListener('input', refresh);
-  document.querySelector('#date-filter')?.addEventListener('change', refresh);
-  document.querySelector('#plate-filter')?.addEventListener('change', refresh);
-  document.querySelector('#clear-filter')?.addEventListener('click', () => adminTable(type));
+  searchInput?.addEventListener('input', refresh);
+  dateInput?.addEventListener('change', refresh);
+  plateSelect?.addEventListener('change', refresh);
 
-  document.querySelectorAll('[data-edit]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const [kind, id] = button.dataset.edit.split(':');
-      state.userTab = kind;
-      state.edit = (kind === 'usage' ? db.usages : db.fuels).find((item) => item.id === id);
-      state.view = 'admin-entry';
-      renderApp();
-    });
+  document.querySelector('#clear-filter')?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    if (dateInput) dateInput.value = '';
+    if (plateSelect) plateSelect.value = '';
+    refresh();
   });
 
-  document.querySelectorAll('[data-delete]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const [kind, id] = button.dataset.delete.split(':');
-      if (!confirm('ยืนยันการลบรายการนี้จากฐานข้อมูลคลาวด์หรือไม่?')) return;
-
-      try {
-        if (supabaseClient) {
-          const table = kind === 'usage' ? 'usages' : 'fuels';
-          const { error } = await supabaseClient.from(table).delete().eq('id', id);
-          if (error) throw error;
-        }
-
-        await addAudit('ลบข้อมูล', `${kind}: ID ${id}`);
-        await syncRemoteData();
-        toast('ลบรายการเรียบร้อย (ระบบคืนยอดเงินเข้าบัตรให้อัตโนมัติ)');
-        adminTable(type);
-      } catch (err) {
-        toast('ลบไม่สำเร็จ: ' + err.message, 'error');
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-approve]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const fuelId = button.dataset.approve;
-      try {
-        if (supabaseClient) {
-          const { error } = await supabaseClient.from('fuels').update({ approved: true }).eq('id', fuelId);
-          if (error) throw error;
-        }
-
-        await addAudit('อนุมัติรายการเติมน้ำมัน', `ID: ${fuelId}`);
-        await syncRemoteData();
-        toast('อนุมัติรายการเรียบร้อย');
-        adminTable('fuel');
-      } catch (err) {
-        toast('อนุมัติไม่สำเร็จ: ' + err.message, 'error');
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-receipt]').forEach((button) => {
-    button.addEventListener('click', () => showReceipt(button.dataset.receipt));
-  });
+  bindRowEvents();
 }
 
 function showReceipt(id) {
@@ -2874,7 +2887,6 @@ function renderReports() {
   const currentDept = 'ทั้งหมด';
   const data = monthData(currentMonth, currentDept);
 
-  // ดึงรายชื่อศูนย์จากคอลัมน์ department ของตาราง vehicles โดยตรง
   const vehicleDepts = getDepartmentsFromVehicles();
   const deptOptionsHtml = vehicleDepts.map(
     (dept) => `<option value="${esc(dept)}" ${dept === currentDept ? 'selected' : ''}>${dept === 'ทั้งหมด' ? 'ทั้งหมด (ทุกศูนย์)' : esc(dept)}</option>`
