@@ -49,6 +49,12 @@
   --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
   --shadow-lg: 0 18px 48px rgba(15, 23, 42, 0.12);
 
+  /* ชนิดน้ำมัน */
+  --fuel-e20: #16a34a;
+  --fuel-e20-soft: #dcfce7;
+  --fuel-b20: #2563eb;
+  --fuel-b20-soft: #dbeafe;
+
   --font-sans:
     "Noto Sans Thai",
     Tahoma,
@@ -96,6 +102,11 @@
 
   --info: #60a5fa;
   --info-soft: #152842;
+
+  --fuel-e20: #22c55e;
+  --fuel-e20-soft: #173b27;
+  --fuel-b20: #3b82f6;
+  --fuel-b20-soft: #152842;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 10px 32px rgba(0, 0, 0, 0.16);
@@ -2295,5 +2306,134 @@ select option {
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+}
+
+/* =========================================================
+   FUEL TYPE & VEHICLE MANAGEMENT (Admin)
+   ========================================================= */
+
+/* ---------- ป้ายชนิดน้ำมัน ---------- */
+.fuel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-strong);
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.fuel-badge.fuel-E20 {
+  background: var(--fuel-e20);
+  border-color: var(--fuel-e20);
+  color: #ffffff;
+}
+
+.fuel-badge.fuel-B20 {
+  background: var(--fuel-b20);
+  border-color: var(--fuel-b20);
+  color: #ffffff;
+}
+
+/* ---------- ช่องแสดงชนิดน้ำมันในฟอร์มเติมน้ำมัน ---------- */
+.fuel-type-display {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.fuel-type-display:has(.fuel-E20) {
+  background: var(--fuel-e20-soft);
+  border-color: color-mix(in srgb, var(--fuel-e20) 45%, transparent);
+  border-style: solid;
+}
+
+.fuel-type-display:has(.fuel-B20) {
+  background: var(--fuel-b20-soft);
+  border-color: color-mix(in srgb, var(--fuel-b20) 45%, transparent);
+  border-style: solid;
+}
+
+.fuel-type-display .fuel-badge {
+  font-size: 0.86rem;
+  padding: 5px 14px;
+}
+
+.fuel-type-display small {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+/* ---------- แถบค้นหาหน้าจัดการรถ (ช่องค้นหา + ปุ่มรีเฟรช) ---------- */
+.filter-bar:has(> #vehicle-search) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* ---------- ตารางจัดการรถ ---------- */
+#vehicle-table-body td .ghost-button,
+#vehicle-table-body td .danger-button {
+  margin-right: 0;
+  white-space: nowrap;
+}
+
+#vehicle-table-body td:first-child {
+  font-weight: 800;
+  color: var(--foreground);
+}
+
+/* ---------- Modal ฟอร์มเพิ่ม/แก้ไขรถ ---------- */
+#vehicle-form .field {
+  margin: 14px 0;
+}
+
+#vehicle-form .field input[readonly] {
+  background: var(--surface-strong);
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+}
+
+#vehicle-form .hint {
+  margin-top: 2px;
+}
+
+#vehicle-modal .modal-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 680px) {
+  .filter-bar:has(> #vehicle-search) {
+    grid-template-columns: 1fr;
+  }
+
+  #vehicle-form .button-row > * {
+    flex: 1 1 0;
+  }
+
+  .fuel-type-display {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media print {
+  .fuel-badge {
+    border: 1px solid #444444 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
   }
 }
