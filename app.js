@@ -164,8 +164,31 @@ async function uploadFileToSupabase(bucket, path, file) {
 }
 
 // =========================================================
-// HELPER FUNCTIONS
+// HELPER FUNCTIONS & FUEL TYPE RULES
 // =========================================================
+const FUEL_TYPE_RULES = [
+  { match: /altis/i, fuel: 'E20' },
+  { match: /revo|hilux/i, fuel: 'B20' },
+];
+
+const FUEL_TYPE_OPTIONS = ['E20', 'B20', 'B7', 'แก๊สโซฮอล์ 91', 'แก๊สโซฮอล์ 95', 'เบนซิน'];
+
+function fuelTypeByModel(model = '') {
+  return FUEL_TYPE_RULES.find((rule) => rule.match.test(model))?.fuel || '';
+}
+
+function fuelBadge(type) {
+  if (!type) return '<span class="fuel-badge">ยังไม่กำหนด</span>';
+  return `<span class="fuel-badge fuel-${esc(type)}">⛽ ${esc(type)}</span>`;
+}
+
+function fuelTypeDisplay(type) {
+  if (!type) {
+    return `<span class="fuel-badge">⚠️ ยังไม่กำหนด</span><small>กรุณาแจ้งแอดมินกำหนดชนิดน้ำมันในเมนู "จัดการรถยนต์"</small>`;
+  }
+  return `${fuelBadge(type)}<small>กำหนดตามข้อมูลรถในระบบ</small>`;
+}
+
 function loadProfile() {
   try {
     return JSON.parse(localStorage.getItem(PROFILE_KEY)) || { avatar: '', phone: '' };
@@ -559,6 +582,7 @@ function normalizeVehicle(vehicle) {
     model: vehicle.model,
     department: vehicle.department || '',
     status: vehicle.status || 'พร้อมใช้งาน',
+    fuelType: vehicle.fuel_type || vehicle.fuelType || fuelTypeByModel(vehicle.model),
     fleetCardBalance: Number(vehicle.fleet_card_balance ?? vehicle.fleetCardBalance ?? 0),
     fleetCardNumber: vehicle.fleet_card_number || vehicle.fleetCardNumber || '',
   };
@@ -577,7 +601,7 @@ async function syncRemoteData() {
       supabaseClient.from('audit').select('*').order('time', { ascending: false }).limit(100),
     ]);
 
-    if (vRes.data && vRes.data.length > 0) {
+    if (vRes.data) {
       const cardMap = new Map((fcRes.data || []).map((card) => [card.vehicle_uuid, card]));
 
       db.vehicles = vRes.data.map((v) => {
@@ -676,6 +700,7 @@ const navItems = {
   admin: [
     ['admin-dashboard', 'layout', 'หน้าหลัก'],
     ['admin-entry', 'file', 'บันทึกข้อมูล'],
+    ['admin-vehicles', 'table', 'จัดการรถยนต์'],
     ['admin-usage', 'table', 'ประวัติใช้รถ'],
     ['admin-fuel', 'fuel', 'ประวัติน้ำมัน'],
     ['admin-service', 'history', 'เช็คระยะ'],
@@ -1126,6 +1151,7 @@ async function fuelForm(record = {}, context = 'user') {
   const vehicleObj = getVehicle(plate);
   const cardBalance = vehicleObj?.fleetCardBalance ?? 0;
   const currentPayment = record.payment || 'Fleet Card';
+  const fuelType = vehicleObj?.fuelType || record.type || '';
 
   return `
     <form class="record-form" data-kind="fuel" data-context="${context}" data-id="${record.id || ''}">
@@ -1147,12 +1173,9 @@ async function fuelForm(record = {}, context = 'user') {
           <input required min="0" type="number" name="mileage" value="${currentMileage}" placeholder="กรอกเลขไมล์ขณะเติม" />
         </div>
         <div class="field">
-          <label>ประเภทน้ำมัน</label>
-          <select required name="type">
-            <option value="ดีเซล" ${record.type === 'ดีเซล' ? 'selected' : ''}>ดีเซล</option>
-            <option value="เบนซิน" ${record.type === 'เบนซิน' ? 'selected' : ''}>เบนซิน</option>
-            <option value="แก๊สโซฮอล์" ${record.type === 'แก๊สโซฮอล์' ? 'selected' : ''}>แก๊สโซฮอล์</option>
-          </select>
+          <label>ประเภทน้ำมันที่ต้องเติม</label>
+          <input type="hidden" name="type" id="fuel-type-input" value="${esc(fuelType)}" />
+          <div id="fuel-type-display" class="fuel-type-display">${fuelTypeDisplay(fuelType)}</div>
         </div>
         <div class="field">
           <label>จำนวนลิตร</label>
@@ -1350,6 +1373,17 @@ function bindEntry(context) {
     }
   };
 
+  const updateFuelTypeDisplay = () => {
+    const typeInput = document.querySelector('#fuel-type-input');
+    const typeDisplay = document.querySelector('#fuel-type-display');
+    if (!typeInput || !typeDisplay) return;
+
+    const plate = document.querySelector('[name=plate]')?.value || state.vehicle?.plate || '';
+    const fuelType = getVehicle(plate)?.fuelType || '';
+    typeInput.value = fuelType;
+    typeDisplay.innerHTML = fuelTypeDisplay(fuelType);
+  };
+
   document.querySelector('#fuel-payment-select')?.addEventListener('change', updateFleetCardDisplay);
   document.querySelector('#fuel-amount-input')?.addEventListener('input', updateFleetCardDisplay);
 
@@ -1374,9 +1408,11 @@ function bindEntry(context) {
     }
 
     updateFleetCardDisplay();
+    updateFuelTypeDisplay();
   });
 
   updateFleetCardDisplay();
+  updateFuelTypeDisplay();
 }
 
 /* =========================================================
@@ -1416,6 +1452,12 @@ async function saveRecord(event) {
     record.mileage = Number(record.mileage);
     record.liters = Number(record.liters);
     record.amount = Number(record.amount);
+
+    const vehicleFuelType = getVehicle(record.plate)?.fuelType;
+    if (vehicleFuelType) record.type = vehicleFuelType;
+    if (!record.type) {
+      return toast('ยังไม่ได้กำหนดชนิดน้ำมันของรถคันนี้ กรุณาแจ้งแอดมินที่เมนู "จัดการรถยนต์"', 'error');
+    }
 
     const file = form.querySelector('[name=receiptFile]')?.files?.[0];
     if (file) {
@@ -2060,7 +2102,6 @@ async function refreshDashboardNow(admin) {
 
 /* =========================================================
    ADMIN TABLES (DIRECT DELETE & APPROVE TO SUPABASE)
-   * แก้ไขแล้ว: ค้นหาโดยไม่อัปเดตทั้งหน้า ป้องกัน Focus เด้งหลุด *
    ========================================================= */
 function renderAdminTableRows(type, records) {
   const isUsage = type === 'usage';
@@ -2280,6 +2321,309 @@ function showReceipt(id) {
   modal.addEventListener('click', (event) => {
     if (event.target === modal) close();
   });
+}
+
+/* =========================================================
+   ADMIN VEHICLES MANAGEMENT (เพิ่ม / ลบ / แก้ไข รถยนต์)
+   ========================================================= */
+function renderAdminVehicles() {
+  const page = document.querySelector('#page');
+  if (!page) return;
+  const vehicles = db.vehicles || [];
+
+  const countE20 = vehicles.filter((v) => v.fuelType === 'E20').length;
+  const countB20 = vehicles.filter((v) => v.fuelType === 'B20').length;
+
+  const rowsHtml = (list) =>
+    list.length
+      ? list
+          .map(
+            (v) => `
+        <tr>
+          <td class="fw-bold text-primary">${esc(v.plate)}</td>
+          <td>${esc(v.model || '-')}</td>
+          <td>${esc(v.department || '-')}</td>
+          <td>${fuelBadge(v.fuelType)}</td>
+          <td>${esc(v.status || '-')}</td>
+          <td>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="ghost-button" data-vehicle-edit="${esc(v.id)}" type="button">✏️ แก้ไข</button>
+              <button class="danger-button" data-vehicle-delete="${esc(v.id)}" type="button">🗑️ ลบ</button>
+            </div>
+          </td>
+        </tr>`,
+          )
+          .join('')
+      : `<tr><td colspan="6" class="empty">ไม่พบข้อมูลรถในระบบ</td></tr>`;
+
+  const actionButtons = `
+    <button class="button" id="btn-add-vehicle" type="button">➕ เพิ่มรถยนต์</button>
+  `;
+
+  page.innerHTML = `
+    ${pageHead('จัดการรถยนต์', 'เพิ่ม แก้ไข หรือลบรถในระบบ พร้อมกำหนดชนิดน้ำมันของรถแต่ละคัน (Altis = E20, Revo = B20)', actionButtons)}
+
+    <div class="grid dashboard" style="margin-bottom: 20px;">
+      <article class="stat-card">
+        <div class="label">จำนวนรถทั้งหมด</div>
+        <div class="value">${number(vehicles.length)} คัน</div>
+        <div class="sub">ข้อมูลจาก Supabase</div>
+      </article>
+      <article class="stat-card">
+        <div class="label">รถใช้น้ำมัน E20</div>
+        <div class="value" style="color:#16a34a;">${number(countE20)} คัน</div>
+        <div class="sub">Toyota Altis</div>
+      </article>
+      <article class="stat-card">
+        <div class="label">รถใช้น้ำมัน B20</div>
+        <div class="value" style="color:#2563eb;">${number(countB20)} คัน</div>
+        <div class="sub">Toyota Hilux Revo</div>
+      </article>
+    </div>
+
+    <section class="card">
+      <div class="filter-bar">
+        <input id="vehicle-search" placeholder="ค้นหาตามทะเบียน, รุ่นรถ, สังกัด, ชนิดน้ำมัน..." />
+        <button class="ghost-button" id="refresh-vehicles" type="button">↻ รีเฟรชข้อมูล</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ทะเบียนรถ</th>
+              <th>รุ่นรถ</th>
+              <th>สังกัด / ศูนย์</th>
+              <th>ชนิดน้ำมัน</th>
+              <th>สถานะ</th>
+              <th style="width: 170px;">การจัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="vehicle-table-body">${rowsHtml(vehicles)}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+
+  const bindRowButtons = (root) => {
+    root.querySelectorAll('[data-vehicle-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = db.vehicles.find((item) => String(item.id) === btn.dataset.vehicleEdit);
+        if (v) openVehicleModal(v);
+      });
+    });
+    root.querySelectorAll('[data-vehicle-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = db.vehicles.find((item) => String(item.id) === btn.dataset.vehicleDelete);
+        if (v) deleteVehicle(v);
+      });
+    });
+  };
+
+  bindRowButtons(page);
+
+  document.querySelector('#btn-add-vehicle')?.addEventListener('click', () => openVehicleModal());
+
+  document.querySelector('#refresh-vehicles')?.addEventListener('click', async () => {
+    await syncRemoteData();
+    renderAdminVehicles();
+    toast('อัปเดตข้อมูลรถแล้ว');
+  });
+
+  document.querySelector('#vehicle-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    const filtered = vehicles.filter((v) =>
+      [v.plate, v.model, v.department, v.fuelType, v.status]
+        .some((field) => String(field || '').toLowerCase().includes(q)),
+    );
+    const tbody = document.querySelector('#vehicle-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = rowsHtml(filtered);
+    bindRowButtons(tbody);
+  });
+}
+
+function openVehicleModal(vehicle = null) {
+  const modalId = 'vehicle-modal';
+  document.getElementById(modalId)?.remove();
+
+  const isEdit = Boolean(vehicle);
+  const currentFuel = vehicle?.fuelType || '';
+  const currentStatus = vehicle?.status || 'พร้อมใช้งาน';
+  const statusOptions = ['พร้อมใช้งาน', 'ซ่อมบำรุง', 'ไม่พร้อมใช้งาน'];
+  if (!statusOptions.includes(currentStatus)) statusOptions.push(currentStatus);
+
+  const fuelOptions = [...FUEL_TYPE_OPTIONS];
+  if (currentFuel && !fuelOptions.includes(currentFuel)) fuelOptions.push(currentFuel);
+
+  const modalHtml = `
+    <div class="modal" id="${modalId}" role="dialog" aria-modal="true">
+      <div class="modal-panel" style="max-width: 520px;">
+        <div class="modal-head">
+          <div>
+            <div class="eyebrow">จัดการรถยนต์</div>
+            <h3>${isEdit ? `แก้ไขรถทะเบียน ${esc(vehicle.plate)}` : 'เพิ่มรถยนต์ใหม่'}</h3>
+          </div>
+          <button class="icon-button icon-button-compact" id="close-vehicle-modal" type="button">✕</button>
+        </div>
+
+        <form id="vehicle-form">
+          <div class="field">
+            <label>ทะเบียนรถ</label>
+            <input required name="plate" value="${esc(vehicle?.plate || '')}" placeholder="เช่น กข 1234 ประจวบคีรีขันธ์"
+              ${isEdit ? 'readonly title="ไม่สามารถแก้ทะเบียนได้ เพื่อไม่ให้ประวัติเดิมหลุดจากรถคันนี้"' : ''} />
+          </div>
+
+          <div class="field">
+            <label>รุ่นรถ</label>
+            <input required name="model" id="vehicle-model-input" list="vehicle-model-list"
+              value="${esc(vehicle?.model || '')}" placeholder="เลือกหรือพิมพ์รุ่นรถ" />
+            <datalist id="vehicle-model-list">
+              <option value="Toyota Altis"></option>
+              <option value="Toyota Hilux Revo"></option>
+            </datalist>
+          </div>
+
+          <div class="field">
+            <label>ชนิดน้ำมัน</label>
+            <select required name="fuelType" id="vehicle-fuel-select">
+              <option value="">-- เลือกชนิดน้ำมัน --</option>
+              ${fuelOptions.map((f) => `<option value="${esc(f)}" ${f === currentFuel ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+            </select>
+            <small class="hint">Altis = E20 / Hilux Revo = B20 (ระบบเลือกให้อัตโนมัติตามรุ่น)</small>
+          </div>
+
+          <div class="field">
+            <label>สังกัด / ศูนย์</label>
+            <input name="department" value="${esc(vehicle?.department || '')}" placeholder="เช่น NT หัวหิน" />
+          </div>
+
+          <div class="field">
+            <label>สถานะ</label>
+            <select name="status">
+              ${statusOptions.map((s) => `<option value="${esc(s)}" ${s === currentStatus ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="button-row" style="margin-top: 20px; justify-content: flex-end;">
+            <button class="ghost-button" id="cancel-vehicle-modal" type="button">ยกเลิก</button>
+            <button class="button" id="submit-vehicle-modal" type="submit">${isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มรถ'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+  const closeModal = () => document.getElementById(modalId)?.remove();
+  document.querySelector('#close-vehicle-modal')?.addEventListener('click', closeModal);
+  document.querySelector('#cancel-vehicle-modal')?.addEventListener('click', closeModal);
+
+  document.querySelector('#vehicle-model-input')?.addEventListener('input', (e) => {
+    const auto = fuelTypeByModel(e.target.value);
+    if (auto) document.querySelector('#vehicle-fuel-select').value = auto;
+  });
+
+  document.querySelector('#vehicle-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.querySelector('#submit-vehicle-modal');
+    const fd = new FormData(e.currentTarget);
+
+    const payload = {
+      plate: String(fd.get('plate') || '').trim(),
+      model: String(fd.get('model') || '').trim(),
+      fuel_type: String(fd.get('fuelType') || '').trim(),
+      department: String(fd.get('department') || '').trim(),
+      status: String(fd.get('status') || 'พร้อมใช้งาน'),
+    };
+
+    if (!payload.plate || !payload.model || !payload.fuel_type) {
+      return toast('กรุณากรอกทะเบียน รุ่นรถ และชนิดน้ำมันให้ครบ', 'error');
+    }
+
+    if (!isEdit && db.vehicles.some((v) => v.plate.replace(/\s/g, '') === payload.plate.replace(/\s/g, ''))) {
+      return toast('มีรถทะเบียนนี้ในระบบแล้ว', 'error');
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'กำลังบันทึก...';
+
+    try {
+      if (!supabaseClient) throw new Error('ไม่ได้เชื่อมต่อกับ Supabase');
+
+      let result;
+      if (isEdit) {
+        result = await supabaseClient.from('vehicles').update(payload).eq('id', vehicle.id).select();
+      } else {
+        result = await supabaseClient.from('vehicles').insert({ ...payload, fleet_card_balance: 0 }).select();
+      }
+      if (result.error) throw result.error;
+      if (!result.data?.length) throw new Error('ไม่มีสิทธิ์บันทึกข้อมูล (ตรวจสอบ RLS ของตาราง vehicles)');
+
+      const actionText = isEdit ? 'แก้ไขข้อมูลรถ' : 'เพิ่มรถใหม่';
+      await addAudit(actionText, `${payload.plate} | ${payload.model} | น้ำมัน ${payload.fuel_type}`);
+      await sendTelegramNotification(
+        `🚗 <b>${actionText}</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `<b>ทะเบียน:</b> ${payload.plate}\n` +
+        `<b>รุ่น:</b> ${payload.model}\n` +
+        `<b>ชนิดน้ำมัน:</b> ${payload.fuel_type}\n` +
+        `<b>ผู้ดำเนินการ:</b> ${state.user?.name || 'แอดมิน'}\n`,
+      );
+
+      toast(isEdit ? 'แก้ไขข้อมูลรถเรียบร้อย' : 'เพิ่มรถเรียบร้อย');
+      closeModal();
+      await syncRemoteData();
+      renderAdminVehicles();
+    } catch (err) {
+      console.error('Save vehicle error:', err);
+      toast('บันทึกไม่สำเร็จ: ' + (err.message || 'เกิดข้อผิดพลาด'), 'error');
+      btn.disabled = false;
+      btn.textContent = isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มรถ';
+    }
+  });
+}
+
+async function deleteVehicle(vehicle) {
+  const usageCount = db.usages.filter((r) => r.plate === vehicle.plate).length;
+  const fuelCount = db.fuels.filter((r) => r.plate === vehicle.plate).length;
+  const serviceCount = db.services.filter((r) => r.plate === vehicle.plate).length;
+
+  const msg =
+    `ยืนยันลบรถทะเบียน ${vehicle.plate} (${vehicle.model || '-'}) ?\n\n` +
+    `ประวัติที่ผูกกับรถคันนี้: ใช้รถ ${usageCount} | เติมน้ำมัน ${fuelCount} | เช็คระยะ ${serviceCount} รายการ\n` +
+    `(ประวัติจะยังอยู่ในระบบ แต่รถจะไม่แสดงให้เลือกอีก)`;
+
+  if (!confirm(msg)) return;
+
+  try {
+    if (!supabaseClient) throw new Error('ไม่ได้เชื่อมต่อกับ Supabase');
+
+    const { error: fcError } = await supabaseClient.from('fleet_card').delete().eq('vehicle_uuid', vehicle.id);
+    if (fcError) console.warn('fleet_card delete warning:', fcError);
+
+    const { data, error } = await supabaseClient.from('vehicles').delete().eq('id', vehicle.id).select();
+    if (error) throw error;
+    if (!data?.length) throw new Error('ไม่มีสิทธิ์ลบข้อมูล (ตรวจสอบ RLS ของตาราง vehicles)');
+
+    if (state.vehicle?.plate === vehicle.plate) state.vehicle = null;
+
+    await addAudit('ลบรถ', `${vehicle.plate} | ${vehicle.model || '-'}`);
+    await sendTelegramNotification(
+      `🗑️ <b>ลบรถออกจากระบบ</b>\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `<b>ทะเบียน:</b> ${vehicle.plate}\n` +
+      `<b>รุ่น:</b> ${vehicle.model || '-'}\n` +
+      `<b>ผู้ดำเนินการ:</b> ${state.user?.name || 'แอดมิน'}\n`,
+    );
+
+    toast('ลบรถเรียบร้อย');
+    await syncRemoteData();
+    renderAdminVehicles();
+  } catch (err) {
+    console.error('Delete vehicle error:', err);
+    toast('ลบไม่สำเร็จ: ' + (err.message || 'เกิดข้อผิดพลาด'), 'error');
+  }
 }
 
 /* =========================================================
@@ -2883,7 +3227,6 @@ function openFleetCardModal(vehicle) {
    ========================================================= */
 const normPlate = (p) => String(p || '').trim().replace(/\s+/g, '');
 
-// ข้อมูลรายงานตามเดือน / ศูนย์ / ทะเบียนรถ (ถ้าระบุทะเบียนจะกรองเฉพาะคันนั้น)
 function reportData(month, department = 'ทั้งหมด', plate = '') {
   const base = monthData(month, department);
   if (!plate) return base;
@@ -2906,7 +3249,6 @@ function reportData(month, department = 'ทั้งหมด', plate = '') {
   };
 }
 
-// รถที่อยู่ในขอบเขตรายงาน (ตามศูนย์ / ทะเบียน)
 function vehiclesInScope(department = 'ทั้งหมด', plate = '') {
   let list = db.vehicles || [];
   if (department && department !== 'ทั้งหมด') {
@@ -2920,7 +3262,6 @@ function vehiclesInScope(department = 'ทั้งหมด', plate = '') {
   return [...list].sort((a, b) => String(a.plate).localeCompare(String(b.plate), 'th'));
 }
 
-// สรุปรายคัน รวมอัตราสิ้นเปลืองน้ำมัน
 function vehicleStatsRows(data, department = 'ทั้งหมด', plate = '') {
   return vehiclesInScope(department, plate).map((v) => {
     const key = normPlate(v.plate);
@@ -3014,7 +3355,6 @@ function vehicleSummaryTableMarkup(rows, tableClass = 'data-table') {
   `;
 }
 
-// สรุปรายศูนย์ (ใช้ในใบพิมพ์แบบ "ทุกศูนย์")
 function departmentSummaryRows(month) {
   return getDepartmentsFromVehicles()
     .filter((d) => d !== 'ทั้งหมด')
@@ -3160,7 +3500,6 @@ function renderReports() {
     if (reportArea) reportArea.innerHTML = reportAreaMarkup(month, dept, plate);
   };
 
-  // เปลี่ยนศูนย์ -> อัปเดตรายการรถใน dropdown ให้ตรงกับศูนย์นั้น
   document.querySelector('#report-department')?.addEventListener('change', () => {
     const { dept } = getFilters();
     const vehicleSelect = document.querySelector('#report-vehicle');
@@ -3171,7 +3510,6 @@ function renderReports() {
   document.querySelector('#report-month')?.addEventListener('change', recalculateAndRender);
   document.querySelector('#calculate-report')?.addEventListener('click', recalculateAndRender);
 
-  // ปุ่มพิมพ์ปุ่มเดียว: พิมพ์ตามเดือน / ศูนย์ / รถ ที่เลือก
   document.querySelector('#print-report')?.addEventListener('click', () => {
     const { month, dept, plate } = getFilters();
     printOfficialReport(month, dept, plate);
@@ -3183,7 +3521,6 @@ function renderReports() {
   });
 }
 
-// สร้าง HTML ของใบรายงาน (ทุกศูนย์ / 1 ศูนย์ / 1 คัน)
 function buildOfficialReportHtml(month, department = 'ทั้งหมด', plate = '') {
   const data = reportData(month, department, plate);
   const now = new Date();
@@ -3421,7 +3758,6 @@ function openPrintWithHtml(html) {
   );
 }
 
-// พิมพ์ตามตัวเลือก: ทุกศูนย์ (department = 'ทั้งหมด'), ศูนย์เดียว, หรือรถรายคัน (ระบุ plate)
 function printOfficialReport(month, department = 'ทั้งหมด', plate = '') {
   openPrintWithHtml(buildOfficialReportHtml(month, department, plate));
 }
@@ -3906,6 +4242,10 @@ async function renderView() {
   if (state.view === 'user-profile') return renderProfile();
   if (state.view === 'admin-dashboard') return renderDashboard(true);
   if (state.view === 'admin-entry') return await renderEntry('admin');
+  if (state.view === 'admin-vehicles') {
+    if (state.role !== 'admin') return await renderEntry('user');
+    return renderAdminVehicles();
+  }
   if (state.view === 'admin-usage') return adminTable('usage');
   if (state.view === 'admin-fuel') return adminTable('fuel');
   if (state.view === 'admin-service') return adminServiceTable();
