@@ -45,34 +45,137 @@ async function sendTelegramNotification(message) {
 }
 
 // =========================================================
-// SERVICE MILEAGE ALERT (เช็คระยะทุกๆ 10,000 กม. แจ้งเตือนล่วงหน้า 500 กม.)
+// SERVICE MILEAGE ALERT (เช็คระยะทุกๆ 10,000 กม.)
+// 4 ระดับการแจ้งเตือน:
+//   1) อีก 500 กม. จะถึงระยะ
+//   2) อีก 250 กม. จะถึงระยะ
+//   3) ครบระยะเข้ารับการตรวจ
+//   4) เกินระยะเข้ารับการตรวจ (ยังไม่มีบันทึกเช็คระยะ)
 // =========================================================
+const SERVICE_INTERVAL = 10000;          // รอบเช็คระยะทุกๆ (กม.)
+const SERVICE_WARN_FAR = 500;            // เตือนล่วงหน้าครั้งที่ 1 (กม.)
+const SERVICE_WARN_NEAR = 250;           // เตือนล่วงหน้าครั้งที่ 2 (กม.)
+const SERVICE_REACHED_TOLERANCE = 100;   // ช่วงที่ถือว่า "ครบระยะ" (0-99 กม. หลังถึงรอบ)
+const SERVICE_DONE_LOOKBACK = 500;       // มีบันทึกเช็คระยะใกล้รอบนี้ (>= รอบ - 500 กม.) ถือว่าเช็คแล้ว
+const SERVICE_OVERDUE_REPEAT = 500;      // เกินระยะ: เตือนซ้ำทุกๆ (กม.)
+const SERVICE_ALERT_LOG_KEY = 'nt-fms-service-alert-log';
+
+function loadServiceAlertLog() {
+  try {
+    return JSON.parse(localStorage.getItem(SERVICE_ALERT_LOG_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveServiceAlertLog(log) {
+  try {
+    // เก็บเฉพาะ 200 รายการล่าสุดเพื่อไม่ให้ localStorage โตเกินไป
+    const entries = Object.entries(log).slice(-200);
+    localStorage.setItem(SERVICE_ALERT_LOG_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch (err) {
+    console.warn('Save service alert log warning:', err);
+  }
+}
+
+// ตรวจว่ารถคันนี้มีบันทึกเช็คระยะใกล้รอบ milestone นี้แล้วหรือยัง
+function isServiceDoneForMilestone(plate, milestone) {
+  const cleanPlate = String(plate || '').trim().replace(/\s+/g, '');
+  return (db.services || []).some(
+    (s) =>
+      String(s.plate || '').trim().replace(/\s+/g, '') === cleanPlate &&
+      Number(s.mileage) >= milestone - SERVICE_DONE_LOOKBACK,
+  );
+}
+
+// คำนวณว่าเลขไมล์ปัจจุบันอยู่ในระดับแจ้งเตือนใด (หรือไม่ต้องแจ้ง)
+function getServiceAlertStage(plate, mileageNum) {
+  const remainder = mileageNum % SERVICE_INTERVAL;
+  const lastMilestone = mileageNum - remainder;          // รอบที่เพิ่งผ่านมา
+  const nextMilestone = lastMilestone + SERVICE_INTERVAL; // รอบถัดไป
+  const remainingToNext = nextMilestone - mileageNum;
+
+  // 3) ครบระยะ: ถึงรอบพอดี หรือเกินรอบไม่เกิน TOLERANCE
+  if (lastMilestone > 0 && remainder < SERVICE_REACHED_TOLERANCE) {
+    if (isServiceDoneForMilestone(plate, lastMilestone)) return null;
+    return { stage: 'reached', milestone: lastMilestone, diff: remainder, key: `${plate}:${lastMilestone}:reached` };
+  }
+
+  // 2) อีก 250 กม.
+  if (remainingToNext <= SERVICE_WARN_NEAR) {
+    if (isServiceDoneForMilestone(plate, nextMilestone)) return null;
+    return { stage: 'near', milestone: nextMilestone, diff: remainingToNext, key: `${plate}:${nextMilestone}:near` };
+  }
+
+  // 1) อีก 500 กม.
+  if (remainingToNext <= SERVICE_WARN_FAR) {
+    if (isServiceDoneForMilestone(plate, nextMilestone)) return null;
+    return { stage: 'far', milestone: nextMilestone, diff: remainingToNext, key: `${plate}:${nextMilestone}:far` };
+  }
+
+  // 4) เกินระยะ: ผ่านรอบมาแล้ว (>= TOLERANCE) แต่ยังไม่มีบันทึกเช็คระยะ
+  if (lastMilestone > 0 && remainder >= SERVICE_REACHED_TOLERANCE) {
+    if (isServiceDoneForMilestone(plate, lastMilestone)) return null;
+    const band = Math.floor(remainder / SERVICE_OVERDUE_REPEAT); // เตือนซ้ำทุกๆ 500 กม.
+    return { stage: 'overdue', milestone: lastMilestone, diff: remainder, key: `${plate}:${lastMilestone}:overdue:${band}` };
+  }
+
+  return null;
+}
+
+function buildServiceAlertMessage(info, plate, mileageNum, driver) {
+  const line = '━━━━━━━━━━━━━━━━━━';
+  const head = {
+    far: `⚠️ <b>แจ้งเตือนเช็คระยะ: อีก ${SERVICE_WARN_FAR.toLocaleString()} กม. เข้ารับการตรวจ</b>`,
+    near: `🟠 <b>แจ้งเตือนเช็คระยะ: อีก ${SERVICE_WARN_NEAR.toLocaleString()} กม. เข้ารับการตรวจ</b>`,
+    reached: `🔴 <b>ครบระยะการเข้ารับการตรวจ</b>`,
+    overdue: `🚨 <b>เกินระยะการเข้ารับการตรวจ</b>`,
+  }[info.stage];
+
+  const detail = {
+    far: `<b>ระยะทางคงเหลือ:</b> อีก ${info.diff.toLocaleString()} กม.`,
+    near: `<b>ระยะทางคงเหลือ:</b> อีก ${info.diff.toLocaleString()} กม.`,
+    reached: info.diff === 0
+      ? `<b>สถานะ:</b> ถึงระยะเช็คพอดี`
+      : `<b>สถานะ:</b> เกินรอบมา ${info.diff.toLocaleString()} กม.`,
+    overdue: `<b>สถานะ:</b> เกินระยะมาแล้ว ${info.diff.toLocaleString()} กม. (ยังไม่มีบันทึกการเช็คระยะ)`,
+  }[info.stage];
+
+  const footer = {
+    far: `🔔 กรุณาวางแผนนำรถเข้ารับการตรวจเช็คสภาพตามระยะ`,
+    near: `🔔 ใกล้ถึงระยะแล้ว กรุณาเตรียมนำรถเข้ารับการตรวจเช็คสภาพ`,
+    reached: `🔔 กรุณานำรถเข้ารับการตรวจเช็คสภาพตามระยะกำหนด`,
+    overdue: `❗ กรุณานำรถเข้ารับการตรวจเช็คสภาพโดยเร็วที่สุด และบันทึกข้อมูลเช็คระยะเข้าระบบ`,
+  }[info.stage];
+
+  return (
+    `${head}\n` +
+    `${line}\n` +
+    `🚗 <b>ทะเบียน:</b> ${esc(plate)}\n` +
+    `<b>เลขไมล์ปัจจุบัน:</b> ${mileageNum.toLocaleString()} กม.\n` +
+    `<b>รอบเช็คสภาพ:</b> ${info.milestone.toLocaleString()} กม.\n` +
+    `${detail}\n` +
+    `<b>ผู้บันทึกล่าสุด:</b> ${esc(driver || '-')}\n` +
+    `${line}\n` +
+    `${footer}`
+  );
+}
+
 async function checkServiceMileageAlert(plate, currentMileage, driver = '') {
   const mileageNum = Number(currentMileage);
-  if (isNaN(mileageNum) || mileageNum <= 0) return;
+  if (!plate || isNaN(mileageNum) || mileageNum <= 0) return;
 
-  const interval = 10000;
-  const threshold = 500;
+  const info = getServiceAlertStage(plate, mileageNum);
+  if (!info) return;
 
-  const remainder = mileageNum % interval;
-  const remaining = remainder === 0 ? 0 : interval - remainder;
+  // กันแจ้งเตือนซ้ำ: ระดับเดียวกัน ของรอบเดียวกัน ส่งครั้งเดียว
+  const log = loadServiceAlertLog();
+  if (log[info.key]) return;
 
-  if (remaining <= threshold && remaining >= 0) {
-    const nextMilestone = remainder === 0 ? mileageNum : mileageNum + remaining;
+  await sendTelegramNotification(buildServiceAlertMessage(info, plate, mileageNum, driver));
 
-    const alertMsg =
-      `⚠️ <b>แจ้งเตือนกำหนดเช็คสภาพรถ / เช็คระยะ</b>\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `🚗 <b>ทะเบียน:</b> ${plate}\n` +
-      `<b>เลขไมล์ปัจจุบัน:</b> ${mileageNum.toLocaleString()} กม.\n` +
-      `<b>รอบเช็คสภาพ:</b> ${nextMilestone.toLocaleString()} กม.\n` +
-      `<b>ระยะทางคงเหลือ:</b> อีก ${remaining.toLocaleString()} กม.\n` +
-      `<b>ผู้บันทึกล่าสุด:</b> ${driver || '-'}\n` +
-      `━━━━━━━━━━━━━━━━━━\n` +
-      `🔔 กรุณานำรถเข้ารับการตรวจเช็คสภาพตามระยะกำหนด`;
-
-    await sendTelegramNotification(alertMsg);
-  }
+  log[info.key] = new Date().toISOString();
+  saveServiceAlertLog(log);
 }
 
 // =========================================================
@@ -1247,7 +1350,7 @@ async function serviceForm(record = {}) {
           <select required name="plate">${vehicleOptions(plate)}</select>
         </div>
         <div class="field">
-          <label>เลขไมล์เข้ารับ service ครั้งต่อไป</label>
+          <label>เลขไมล์ขณะเข้ารับการตรวจเช็ค (กม.)</label>
           <input required min="0" type="number" name="mileage" value="${currentMileage}" />
         </div>
         <div class="field">
